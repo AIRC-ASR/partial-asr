@@ -30,19 +30,19 @@ os.environ['TRANSFORMERS_CACHE'] = '/gpfs/u/home/NLUG/NLUGcbsm/scratch/cache/tra
 os.environ['HF_HOME'] = '/gpfs/u/home/NLUG/NLUGcbsm/scratch/cache'
 
 def train(
-    use_lora: bool = True,
+    use_lora: bool = False,
     # model/data params
     base_model: str = "FreedomIntelligence/phoenix-inst-chat-7b",  # the only required argument
-    data_path: str = "pseudo_data/training_data/no_added_errors/clean/1000/5_best/train_ipa.json",
-    dev_data_path: str = "pseudo_data/training_data/dev_1000_ipa.json",
-    output_dir: str = "saved_models/no_added_errors/clean/1000/5_best_ipa2",
+    data_path: str = "/gpfs/u/home/NLUG/NLUGcbsm/scratch-shared/librispeech-data/original/validation-clean.json",
+    dev_data_path: str = "/gpfs/u/home/NLUG/NLUGcbsm/scratch-shared/librispeech-data/empty.json",
+    output_dir: str = "/gpfs/u/home/NLUG/NLUGcbsm/scratch-shared/librispeech-data/original/models/0-shot",
     val_set_size: int = 0,
     # training hyperparams
-    batch_size: int = 32,
-    micro_batch_size: int = 4,
-    num_epochs: int = 7,
+    batch_size: int = 8,
+    micro_batch_size: int = 2,
+    num_epochs: int = 1,
     learning_rate: float = 2e-5,
-    cutoff_len: int = 2500,
+    cutoff_len: int = 1500,
     # lora hyperparams
     lora_r: int = 8,
     lora_alpha: int = 16,
@@ -64,7 +64,7 @@ def train(
     wandb_log_model: str = "",  # options: false | true
     # resume_from_checkpoint: str = '',  # either training checkpoint or final adapter
     # resume_from_checkpoint: str = './saved_models/no_added_errors/other/500/checkpoint-X',
-    resume_from_checkpoint: str = './saved_models/no_added_errors/clean/1000/5_best_ipa/checkpoint-270',
+    resume_from_checkpoint: str = '',
     prompt_template_name: str = "phoenix",  # The prompt template to use, will default to alpaca.
 ):
     print("LOCAL RANK", int(os.environ.get("LOCAL_RANK", 0)))
@@ -105,7 +105,7 @@ def train(
     prompter = Prompter(prompt_template_name)
 
     device_map = "auto"
-    # device_map = {"": torch.cuda.current_device()}
+    # device_map = {"": 0}
     world_size = int(os.environ.get("WORLD_SIZE", 1))
     ddp = world_size != 1
     if ddp:
@@ -245,7 +245,7 @@ def train(
             else:
                 print(f"Checkpoint {checkpoint_name} not found")
 
-    model.print_trainable_parameters()  # Be more transparent about the % of trainable params.
+    # model.print_trainable_parameters()  # Be more transparent about the % of trainable params.
 
     # if val_set_size > 0:
     #     train_val = data["train"].train_test_split(

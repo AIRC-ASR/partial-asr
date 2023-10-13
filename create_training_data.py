@@ -22,7 +22,7 @@ NUM_HYPOTHESES = 5
 PERCENTAGE_TO_REMOVE = 0.05
 IS_PARTIAL = True if PERCENTAGE_TO_REMOVE > 0.0 else False
 # validation.clean, validation.other, test.other, test.clean, train.clean.100, train.clean.360, train.other.500
-DS_SPLIT = "test.clean"
+DS_SPLIT = "train.other.500"
 FILE_NAME_PREFIX = f"scratch-shared/librispeech-data/{choose_folder_name(PERCENTAGE_TO_REMOVE)}"
 OUTPUT_FILE_NAME = f"{FILE_NAME_PREFIX}/{DS_SPLIT.replace('.', '-')}.json"
 MAX_WORKERS = 1
@@ -111,7 +111,6 @@ def main():
   checkpoint_files = [file for file in all_files if file.startswith(f"{CHECKPOINT_FOLDER}/{DS_SPLIT.replace('.', '-')}-checkpoint-") and file.endswith(".json")]
   checkpoint_files = sorted(checkpoint_files, key=lambda x: int(x.split("checkpoint-")[1].split(".")[0]))
 
-  print('checkpoint_files', checkpoint_files)
   if any(os.path.exists(checkpoint_file) for checkpoint_file in checkpoint_files):
     for checkpoint_file in checkpoint_files:
       if os.path.exists(checkpoint_file):
