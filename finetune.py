@@ -17,32 +17,31 @@ from peft import (
     LoraConfig,
     get_peft_model,
     get_peft_model_state_dict,
-    prepare_model_for_int8_training,
+    prepare_model_for_kbit_training,
     set_peft_model_state_dict,
+    PromptTuningConfig,
+    TaskType,
 )
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from utils.prompter import Prompter
 
-# Change the download location of the model to avoid download size limitations
-os.environ['TRANSFORMERS_CACHE'] = '/gpfs/u/home/NLUG/NLUGcbsm/scratch/cache/transformers'
-# os.environ['HF_DATASETS_CACHE'] = '/gpfs/u/home/NLUG/NLUGcbsm/scratch/cache/datasets'
-os.environ['HF_HOME'] = '/gpfs/u/home/NLUG/NLUGcbsm/scratch/cache'
-
+MODEL_NAME = "25-percent-removed"
 def train(
-    use_lora: bool = False,
+    use_lora: bool = True,
+    use_prompt_tuning: bool = False,
     # model/data params
     base_model: str = "FreedomIntelligence/phoenix-inst-chat-7b",  # the only required argument
-    data_path: str = "/gpfs/u/home/NLUG/NLUGcbsm/scratch-shared/librispeech-data/original/validation-clean.json",
-    dev_data_path: str = "/gpfs/u/home/NLUG/NLUGcbsm/scratch-shared/librispeech-data/empty.json",
-    output_dir: str = "/gpfs/u/home/NLUG/NLUGcbsm/scratch-shared/librispeech-data/original/models/0-shot",
-    val_set_size: int = 0,
+    data_path: str = f"llama2-data/{MODEL_NAME}/train.json",
+    dev_data_path: str = f"llama2-data/{MODEL_NAME}/dev.json",
+    output_dir: str = f"models/{MODEL_NAME}",
+    val_set_size: int = 300,
     # training hyperparams
-    batch_size: int = 8,
-    micro_batch_size: int = 2,
-    num_epochs: int = 1,
+    batch_size: int = 1,
+    micro_batch_size: int = 1,
+    num_epochs: int = 5,
     learning_rate: float = 2e-5,
-    cutoff_len: int = 1500,
+    cutoff_len: int = 3225,
     # lora hyperparams
     lora_r: int = 8,
     lora_alpha: int = 16,
@@ -64,7 +63,7 @@ def train(
     wandb_log_model: str = "",  # options: false | true
     # resume_from_checkpoint: str = '',  # either training checkpoint or final adapter
     # resume_from_checkpoint: str = './saved_models/no_added_errors/other/500/checkpoint-X',
-    resume_from_checkpoint: str = '',
+    resume_from_checkpoint: str = f'models/{MODEL_NAME}/checkpoint-7500',
     prompt_template_name: str = "phoenix",  # The prompt template to use, will default to alpaca.
 ):
     print("LOCAL RANK", int(os.environ.get("LOCAL_RANK", 0)))
@@ -105,7 +104,11 @@ def train(
     prompter = Prompter(prompt_template_name)
 
     device_map = "auto"
-    # device_map = {"": 0}
+    # torch.cuda.set_device(4)
+    # print("DEVICE", torch.cuda.current_device())
+    # device_map = {"lm_head": 1, "transformer": 1}
+    print("DDD", torch.cuda.current_device())
+    device_map={'':torch.cuda.current_device()}
     world_size = int(os.environ.get("WORLD_SIZE", 1))
     ddp = world_size != 1
     if ddp:
@@ -127,25 +130,28 @@ def train(
     # if len(wandb_log_model) > 0:
     #     os.environ["WANDB_LOG_MODEL"] = wandb_log_model
 
-    if use_lora:
+    if use_lora or use_prompt_tuning:
         model = AutoModelForCausalLM.from_pretrained(
             base_model,
             load_in_8bit=True,
             torch_dtype=torch.float16,
             device_map=device_map,
-            cache_dir="/gpfs/u/home/NLUG/NLUGcbsm/scratch/cache/transformers",
+            cache_dir="cache/transformers",
         )
+        print("DEVICE MAP", model.hf_device_map)
+
     else:
         model = AutoModelForCausalLM.from_pretrained(
             base_model,
             load_in_8bit=False,
             torch_dtype=torch.float32,
             device_map=device_map,
-            cache_dir="/gpfs/u/home/NLUG/NLUGcbsm/scratch/cache/transformers",
+            cache_dir="cache/transformers",
         )
     tokenizer = AutoTokenizer.from_pretrained(
         base_model,
-        cache_dir="/gpfs/u/home/NLUG/NLUGcbsm/scratch/cache/transformers"
+        device_map=device_map,
+        cache_dir="cache/transformers"
     )
 
     tokenizer.pad_token_id = (
@@ -202,7 +208,7 @@ def train(
         # print(tokenized_full_prompt)
         return tokenized_full_prompt
     if use_lora:
-        model = prepare_model_for_int8_training(model)
+        model = prepare_model_for_kbit_training(model)
 
         config = LoraConfig(
             r=lora_r,
@@ -213,14 +219,23 @@ def train(
             task_type="CAUSAL_LM",
         )
         model = get_peft_model(model, config)
+    elif use_prompt_tuning:
+        model = prepare_model_for_kbit_training(model)
+
+        config = PromptTuningConfig(
+            task_type=TaskType.CAUSAL_LM,
+            num_virtual_tokens=8,
+            tokenizer_name_or_path=tokenizer,
+        )
+        model = get_peft_model(model, config)
 
     if data_path.endswith(".json") or data_path.endswith(".jsonl"):
-        data = load_dataset("json", data_files=data_path, cache_dir="/gpfs/u/home/NLUG/NLUGcbsm/scratch/cache/datasets")
+        data = load_dataset("json", data_files=data_path, cache_dir="cache/datasets")
     else:
         data = load_dataset(data_path)
     
     if dev_data_path.endswith(".json") or dev_data_path.endswith(".jsonl"):
-        dev_data = load_dataset("json", data_files=dev_data_path, cache_dir="/gpfs/u/home/NLUG/NLUGcbsm/scratch/cache/datasets")
+        dev_data = load_dataset("json", data_files=dev_data_path, cache_dir="cache/datasets")
     else:
         dev_data = load_dataset(dev_data_path)
 
@@ -245,22 +260,9 @@ def train(
             else:
                 print(f"Checkpoint {checkpoint_name} not found")
 
-    # model.print_trainable_parameters()  # Be more transparent about the % of trainable params.
+    model.print_trainable_parameters()  # Be more transparent about the % of trainable params.
 
-    # if val_set_size > 0:
-    #     train_val = data["train"].train_test_split(
-    #         test_size=val_set_size, shuffle=True, seed=42
-    #     )
-    #     train_data = (
-    #         train_val["train"].shuffle().map(generate_and_tokenize_prompt)
-    #     )
-    #     val_data = (
-    #         train_val["test"].shuffle().map(generate_and_tokenize_prompt)
-    #     )
-    # else:
-    #     train_data = data["train"].shuffle().map(generate_and_tokenize_prompt)
-    #     dev_data = dev_data['train'].shuffle().map(generate_and_tokenize_prompt)
-    #     val_data = None
+
     if val_set_size > 0:
         train_data = data["train"].shuffle().map(generate_and_tokenize_prompt, load_from_cache_file=True)
         # val_data = None
@@ -283,24 +285,24 @@ def train(
         args=transformers.TrainingArguments(
             per_device_train_batch_size=micro_batch_size,
             gradient_accumulation_steps=gradient_accumulation_steps,
-            warmup_steps=len(train_data) // 10, # Rougly 10% of the training data
+            # warmup_steps=len(train_data) // 10, # Rougly 10% of the training data
             num_train_epochs=num_epochs,
             learning_rate=learning_rate,
             fp16=False,
             optim="adamw_torch",
-            logging_steps=5,
+            logging_steps=500,
             evaluation_strategy="steps" if val_set_size > 0 else "no",
             save_strategy="steps",
-            eval_steps=10 if val_set_size > 0 else None,
-            save_steps=10,
+            eval_steps=500 if val_set_size > 0 else None,
+            save_steps=500,
             logging_first_step = True,
             output_dir=output_dir,
             save_total_limit=2,
             load_best_model_at_end=True if val_set_size > 0 else False,
             ddp_find_unused_parameters=False if ddp else None,
             group_by_length=group_by_length,
-            report_to="wandb" if use_wandb else None,
-            run_name=wandb_run_name if use_wandb else None,
+            # report_to="wandb" if use_wandb else None,
+            # run_name=wandb_run_name if use_wandb else None,
         ),
         data_collator=transformers.DataCollatorForSeq2Seq(
             tokenizer, pad_to_multiple_of=8, return_tensors="pt", padding=True

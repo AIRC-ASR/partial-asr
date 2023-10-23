@@ -19,11 +19,11 @@ def choose_folder_name(percentage_to_remove):
   elif percentage_to_remove == 0.25: return "25-percent-removed"
 
 NUM_HYPOTHESES = 5
-PERCENTAGE_TO_REMOVE = 0.05
+PERCENTAGE_TO_REMOVE = 0.10
 IS_PARTIAL = True if PERCENTAGE_TO_REMOVE > 0.0 else False
 # validation.clean, validation.other, test.other, test.clean, train.clean.100, train.clean.360, train.other.500
 DS_SPLIT = "train.other.500"
-FILE_NAME_PREFIX = f"scratch-shared/librispeech-data/{choose_folder_name(PERCENTAGE_TO_REMOVE)}"
+FILE_NAME_PREFIX = f"../../scratch-shared/librispeech-data/{choose_folder_name(PERCENTAGE_TO_REMOVE)}"
 OUTPUT_FILE_NAME = f"{FILE_NAME_PREFIX}/{DS_SPLIT.replace('.', '-')}.json"
 MAX_WORKERS = 1
 CHECKPOINT_INTERVAL = 100
@@ -99,28 +99,39 @@ def main():
   processor, model = load_whisper_model()
   instruction = generate_instruction()
 
-  dataset = load_dataset("librispeech_asr", "all", split=DS_SPLIT, cache_dir="scratch/partial-asr/datasets")
-  num_data_points = len(dataset)
+  dataset = load_dataset("librispeech_asr", "all", split=DS_SPLIT, cache_dir="datasets")
+  # num_data_points = len(dataset)
+  num_data_points = 500
 
   data = []
-  examples = [example for example in dataset]
+  if num_data_points == len(dataset):
+    examples = [example for example in dataset]
+  else:
+    print("HERE")
+    examples = []
+    for count, example in enumerate(dataset):
+      print("count", count)
+      if count == num_data_points:
+        break
+      
+      examples.append(example)
 
   # Check if a checkpoint file exists for resuming
-  all_files = os.listdir(CHECKPOINT_FOLDER)
+  # all_files = os.listdir(CHECKPOINT_FOLDER)
 
-  checkpoint_files = [file for file in all_files if file.startswith(f"{CHECKPOINT_FOLDER}/{DS_SPLIT.replace('.', '-')}-checkpoint-") and file.endswith(".json")]
-  checkpoint_files = sorted(checkpoint_files, key=lambda x: int(x.split("checkpoint-")[1].split(".")[0]))
+  # checkpoint_files = [file for file in all_files if file.startswith(f"{CHECKPOINT_FOLDER}/{DS_SPLIT.replace('.', '-')}-checkpoint-") and file.endswith(".json")]
+  # checkpoint_files = sorted(checkpoint_files, key=lambda x: int(x.split("checkpoint-")[1].split(".")[0]))
 
-  if any(os.path.exists(checkpoint_file) for checkpoint_file in checkpoint_files):
-    for checkpoint_file in checkpoint_files:
-      if os.path.exists(checkpoint_file):
-        checkpoint_iteration = int(checkpoint_file.split("checkpoint-")[1].split(".")[0])
-        print(f"Resuming from checkpoint: {checkpoint_file} at iteration {checkpoint_iteration}...")
-        data = resume_from_checkpoint(checkpoint_file, data)
-        examples = examples[checkpoint_iteration:]
-        num_data_points = len(examples)
-        print(f"Resized dataset size: {num_data_points}")
-        break
+  # if any(os.path.exists(checkpoint_file) for checkpoint_file in checkpoint_files):
+  #   for checkpoint_file in checkpoint_files:
+  #     if os.path.exists(checkpoint_file):
+  #       checkpoint_iteration = int(checkpoint_file.split("checkpoint-")[1].split(".")[0])
+  #       print(f"Resuming from checkpoint: {checkpoint_file} at iteration {checkpoint_iteration}...")
+  #       data = resume_from_checkpoint(checkpoint_file, data)
+  #       examples = examples[checkpoint_iteration:]
+  #       num_data_points = len(examples)
+  #       print(f"Resized dataset size: {num_data_points}")
+  #       break
 
   if MAX_WORKERS == 1:
     for i, example in enumerate(tqdm(dataset, total=num_data_points)):
@@ -130,11 +141,11 @@ def main():
       data_point = process_example(instruction, processor, model, example)
       data.append(data_point)
 
-      if i > 0 and i % CHECKPOINT_INTERVAL == 0:
-        checkpoint_file = f"{CHECKPOINT_FOLDER}/{DS_SPLIT.replace('.', '-')}-checkpoint-{i}.json"
-        with open(checkpoint_file, 'w') as json_file:
-          json.dump(data, json_file)
-        print(f"Checkpoint saved to {checkpoint_file}")
+      # if i > 0 and i % CHECKPOINT_INTERVAL == 0:
+      #   checkpoint_file = f"{CHECKPOINT_FOLDER}/{DS_SPLIT.replace('.', '-')}-checkpoint-{i}.json"
+      #   with open(checkpoint_file, 'w') as json_file:
+      #     json.dump(data, json_file)
+      #   print(f"Checkpoint saved to {checkpoint_file}")
 
   else:
     with ProcessPoolExecutor(max_workers=MAX_WORKERS) as executor:
@@ -143,21 +154,22 @@ def main():
       for i, result in enumerate(tqdm(executor.map(process_example_with_executor_partial, examples), total=num_data_points)):
         data.append(result)
 
-        if i > 0 and i % CHECKPOINT_INTERVAL == 0:
-          checkpoint_file = f"{CHECKPOINT_FOLDER}/{DS_SPLIT.replace('.', '-')}-checkpoint-{i}.json"
-          with open(checkpoint_file, 'w') as json_file:
-            json.dump(data, json_file)
-          print(f"Checkpoint saved to {checkpoint_file}")
+        # if i > 0 and i % CHECKPOINT_INTERVAL == 0:
+        #   checkpoint_file = f"{CHECKPOINT_FOLDER}/{DS_SPLIT.replace('.', '-')}-checkpoint-{i}.json"
+        #   with open(checkpoint_file, 'w') as json_file:
+        #     json.dump(data, json_file)
+        #   print(f"Checkpoint saved to {checkpoint_file}")
 
   with open(OUTPUT_FILE_NAME, 'w') as json_file:
     json.dump(data, json_file)
 
   # Remove any existing checkpoint files
-  for i in range(0, num_data_points, CHECKPOINT_INTERVAL):
-    checkpoint_file = f"{CHECKPOINT_FOLDER}/{DS_SPLIT.replace('.', '-')}-checkpoint-{i}.json"
-    if os.path.exists(checkpoint_file):
-      os.remove(checkpoint_file)
+  # for i in range(0, num_data_points, CHECKPOINT_INTERVAL):
+  #   checkpoint_file = f"{CHECKPOINT_FOLDER}/{DS_SPLIT.replace('.', '-')}-checkpoint-{i}.json"
+  #   if os.path.exists(checkpoint_file):
+  #     os.remove(checkpoint_file)
 
 if __name__ == "__main__":
-  mp.set_start_method('spawn')
+  if MAX_WORKERS > 1:
+    mp.set_start_method('spawn')
   main()

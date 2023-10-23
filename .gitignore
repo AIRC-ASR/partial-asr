@@ -1,2 +1,5 @@
 venv/
 datasets/
+cache/
+aimos_venv/
+models/
