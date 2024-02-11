@@ -1,6 +1,0 @@
-{
-    "description": "Template used by phoenix.",
-    "prompt_input": "{instruction}\n\n{input}\n Response: \n",
-    "prompt_no_input": "{instruction}\n\n Response: \n",
-    "response_split": "Response:"    
-}
